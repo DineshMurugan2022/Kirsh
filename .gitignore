@@ -41,3 +41,9 @@ app-example
 # generated native folders
 /ios
 /android
+
+# local build files
+.eas/
+.gradle-local/
+*.apk
+plugins/

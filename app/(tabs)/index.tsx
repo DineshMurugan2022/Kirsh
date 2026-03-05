@@ -1,6 +1,8 @@
+// VERSION_V2_BRUTAL_DIAGNOSTICS
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
   FlatList,
@@ -17,7 +19,7 @@ import {
 } from 'react-native';
 import RNBluetoothClassic from 'react-native-bluetooth-classic';
 import { Button, Card, Divider, List, Modal, PaperProvider, Portal } from 'react-native-paper';
-import Animated, { FadeInUp } from 'react-native-reanimated';
+import Animated, { FadeInDown, FadeInUp, Layout } from 'react-native-reanimated';
 
 // Standard SPP UUID for POS/Serial communication
 const SPP_UUID = '00001101-0000-1000-8000-00805f9b34fb';
@@ -48,6 +50,10 @@ const translations = {
     sent: 'Sent',
     failed: 'Failed',
     noLog: 'No activity yet',
+    disconnect: 'DISCONNECT',
+    selling: 'Selling Amount',
+    remaining: 'Remaining Amount',
+    mode: 'Mode',
   },
   ta: {
     title: 'BMI செயலி',
@@ -68,7 +74,12 @@ const translations = {
     sent: 'அனுப்பப்பட்டது',
     failed: 'தோல்வி',
     noLog: 'சமீபத்திய செயல்பாடு இல்லை',
+    disconnect: 'இணைப்பைத் துண்டி',
+    selling: 'விற்பனை அளவு',
+    remaining: 'மீத அளவு',
+    mode: 'முறை',
   },
+
 };
 
 export default function HomeScreen() {
@@ -79,37 +90,88 @@ export default function HomeScreen() {
   const [discoveredDevices, setDiscoveredDevices] = useState<any[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [manualWeight, setManualWeight] = useState('');
+  const [isHeartbeatActive, setIsHeartbeatActive] = useState(false);
   const [activityLog, setActivityLog] = useState<any[]>([]);
+  const [isSending, setIsSending] = useState(false);
+  const [weightMode, setWeightMode] = useState<'selling' | 'remaining'>('selling');
 
   const scrollRef = useRef<ScrollView>(null);
+  const connectionStatusRef = useRef(connectionStatus);
+  const manualDisconnectRef = useRef(false);
   const t = translations[lang];
 
   useEffect(() => {
-    if (Platform.OS === 'web') return;
+    connectionStatusRef.current = connectionStatus;
+  }, [connectionStatus]);
 
-    const init = async () => {
-      await requestPermissions();
-      checkLastDevice();
+  // Activity Log helper
+  const addLog = useCallback((tag: string, weight: string, status: string) => {
+    const time = new Date().toLocaleTimeString();
+    const newLog = {
+      id: Date.now(),
+      weight: tag === 'POS >>' ? tag : `${weight} kg`,
+      time,
+      status, // 'sent' or 'failed'
+      mode: tag === 'POS >>' ? weight : weightMode,
     };
-    init();
+    setActivityLog(prev => [newLog, ...prev.slice(0, 19)]);
+  }, [weightMode]);
 
-    const onConnected = RNBluetoothClassic.onDeviceConnected((event) => {
-      setConnectionStatus('connected');
-      setDevice(event.device);
-      saveLastDevice(event.device.address);
-    });
+  // Aggressive Handshake Logic for POS/OASYS
+  const initiateHandshake = useCallback(async (connectedDevice: any) => {
+    if (!connectedDevice) return;
 
-    const onDisconnected = RNBluetoothClassic.onDeviceDisconnected((event) => {
-      setConnectionStatus('notConnected');
-      setDevice(null);
-    });
+    console.log(`[Handshake] Starting aggressive EWS sequence for ${connectedDevice.address}...`);
+    let pulseCount = 0;
+    const maxPulses = 5; // Increased pulses
+    const signals = ['EWS\n', 'READY\n', '\n']; // Simplified to \n and prioritized EWS
 
-    return () => {
-      onConnected.remove();
-      onDisconnected.remove();
+    const sendPulse = async () => {
+      if (pulseCount >= maxPulses) {
+        console.log('[Handshake] Aggressive sequence finished.');
+        setIsHeartbeatActive(true);
+        addLog('System', 'EWS Active', 'sent');
+        return;
+      }
+
+      try {
+        for (const signal of signals) {
+          await RNBluetoothClassic.writeToDevice(connectedDevice.address, signal);
+          console.log(`[Handshake] Sent pulse ${pulseCount + 1}: ${JSON.stringify(signal)}`);
+          await new Promise(resolve => setTimeout(resolve, 200));
+        }
+        pulseCount++;
+        setTimeout(sendPulse, 2000); // Repeat pulse every 2 seconds
+      } catch (err) {
+        console.error('[Handshake] Pulse failed:', err);
+        pulseCount++;
+        if (pulseCount < maxPulses) setTimeout(sendPulse, 2000);
+      }
     };
+
+    // Start handshake
+    setTimeout(sendPulse, 500);
+  }, [addLog]);
+
+  const resolveConnectedDevice = useCallback(async (address: string, fallback?: any) => {
+    if (fallback && typeof fallback === 'object' && fallback.address) {
+      return fallback;
+    }
+
+    try {
+      const direct = await (RNBluetoothClassic as any).getConnectedDevice?.(address);
+      if (direct?.address) {
+        return direct;
+      }
+    } catch (e) {
+      console.log('getConnectedDevice fallback failed:', e);
+    }
+
+    const devices = await RNBluetoothClassic.getConnectedDevices();
+    return devices.find((d: any) => d?.address === address) ?? null;
   }, []);
 
+  // Persist last device
   const saveLastDevice = async (address: string) => {
     try {
       await AsyncStorage.setItem('last_device_address', address);
@@ -118,13 +180,12 @@ export default function HomeScreen() {
     }
   };
 
-  const checkLastDevice = async () => {
+  const checkLastDevice = useCallback(async () => {
     try {
       const address = await AsyncStorage.getItem('last_device_address');
       if (address) {
         setConnectionStatus('connecting');
 
-        // Use a more robust connection check
         const isConnected = await RNBluetoothClassic.isDeviceConnected(address);
         if (isConnected) {
           const connectedDevice = await RNBluetoothClassic.getConnectedDevices();
@@ -132,6 +193,7 @@ export default function HomeScreen() {
           if (match) {
             setDevice(match);
             setConnectionStatus('connected');
+            initiateHandshake(match);
             return;
           }
         }
@@ -142,14 +204,11 @@ export default function HomeScreen() {
           connectionUuid: SPP_UUID,
         });
 
-        if (connected) {
-          // Device state will be updated by listener or if not, we set it here
-          const devices = await RNBluetoothClassic.getConnectedDevices();
-          const currentDevice = devices.find(d => d.address === address);
-          if (currentDevice) {
-            setDevice(currentDevice);
-            setConnectionStatus('connected');
-          }
+        const currentDevice = await resolveConnectedDevice(address, connected);
+        if (currentDevice) {
+          setDevice(currentDevice);
+          setConnectionStatus('connected');
+          initiateHandshake(currentDevice);
         } else {
           setConnectionStatus('notConnected');
         }
@@ -158,29 +217,127 @@ export default function HomeScreen() {
       console.error('Auto-connect failed', e);
       setConnectionStatus('notConnected');
     }
-  };
+  }, [initiateHandshake, resolveConnectedDevice]);
 
   const requestPermissions = async () => {
     if (Platform.OS === 'web') return true;
     if (Platform.OS === 'android') {
       try {
-        const granted = await PermissionsAndroid.requestMultiple([
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        ]);
-        return (
-          granted['android.permission.BLUETOOTH_CONNECT'] === PermissionsAndroid.RESULTS.GRANTED &&
-          granted['android.permission.BLUETOOTH_SCAN'] === PermissionsAndroid.RESULTS.GRANTED &&
-          granted['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED
-        );
+        const apiLevel = Number(Platform.Version);
+        if (apiLevel >= 31) {
+          const granted = await PermissionsAndroid.requestMultiple([
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+            PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          ]);
+          return (
+            granted['android.permission.BLUETOOTH_CONNECT'] === PermissionsAndroid.RESULTS.GRANTED &&
+            granted['android.permission.BLUETOOTH_SCAN'] === PermissionsAndroid.RESULTS.GRANTED &&
+            granted['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED
+          );
+        } else {
+          const granted = await PermissionsAndroid.requestMultiple([
+            PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          ]);
+          return granted['android.permission.ACCESS_FINE_LOCATION'] === PermissionsAndroid.RESULTS.GRANTED;
+        }
       } catch (err) {
-        console.warn(err);
+        console.warn('Permission request failed:', err);
         return false;
       }
     }
     return true;
   };
+
+  // Persistent connect/disconnect listeners
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const init = async () => {
+      await requestPermissions();
+      checkLastDevice();
+    };
+    init();
+
+    const onConnected = RNBluetoothClassic.onDeviceConnected((event: any) => {
+      const nextDevice = event?.device ?? event;
+      if (!nextDevice?.address) {
+        console.log('onDeviceConnected received invalid event:', event);
+        return;
+      }
+      manualDisconnectRef.current = false;
+      console.log('Event: onDeviceConnected', nextDevice.address);
+      setConnectionStatus('connected');
+      setDevice(nextDevice);
+      saveLastDevice(nextDevice.address);
+      initiateHandshake(nextDevice);
+    });
+
+    const onDisconnected = RNBluetoothClassic.onDeviceDisconnected(() => {
+      setConnectionStatus('notConnected');
+      setDevice(null);
+      setIsHeartbeatActive(false);
+      // Attempt reconnect only for unexpected disconnects.
+      if (manualDisconnectRef.current) {
+        manualDisconnectRef.current = false;
+        return;
+      }
+      setTimeout(() => checkLastDevice(), 3000);
+    });
+
+    return () => {
+      onConnected.remove();
+      onDisconnected.remove();
+    };
+  }, [checkLastDevice, initiateHandshake]);
+
+  // Per-device read listener
+  useEffect(() => {
+    if (Platform.OS === 'web' || !device?.address || connectionStatus !== 'connected') {
+      return;
+    }
+
+    const onDataReceived = (RNBluetoothClassic as any).onDeviceRead(device.address, (event: any) => {
+      console.log('Bluetooth Data Received:', event);
+      const dataStr = typeof event?.data === 'string' ? event.data : String(event?.data ?? event ?? '');
+      addLog('POS >>', dataStr, 'sent');
+    });
+
+    return () => {
+      onDataReceived?.remove?.();
+    };
+  }, [device?.address, connectionStatus, addLog]);
+
+  // Background auto-connect timer (every 30s if not connected)
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    const autoConnectTimer = setInterval(() => {
+      if (connectionStatusRef.current === 'notConnected') {
+        checkLastDevice();
+      }
+    }, 30000);
+
+    return () => clearInterval(autoConnectTimer);
+  }, [checkLastDevice]);
+
+  // Heartbeat mechanism - Critical for OASYS staying "Connected"
+  useEffect(() => {
+    let interval: any;
+    if (connectionStatus === 'connected' && isHeartbeatActive && device) {
+      interval = setInterval(async () => {
+        try {
+          // Send EWS pulse instead of just newline to maintain machine-side status
+          await RNBluetoothClassic.writeToDevice(device.address, 'EWS\n');
+        } catch (error) {
+          console.error('Heartbeat failed:', error);
+          setIsHeartbeatActive(false);
+        }
+      }, 3000); // Every 3 seconds
+    }
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [connectionStatus, device, isHeartbeatActive]);
 
   const startDiscovery = async () => {
     if (Platform.OS === 'web') {
@@ -192,27 +349,23 @@ export default function HomeScreen() {
     try {
       const granted = await requestPermissions();
       if (!granted) {
-        Alert.alert('Error', 'Bluetooth permissions are required.');
+        Alert.alert('DIAGNOSTIC_PERMISSION_ERROR', 'Bluetooth permissions are required.');
         setIsScanning(false);
         return;
       }
 
       const enabled = await RNBluetoothClassic.isBluetoothEnabled();
       if (!enabled) {
-        Alert.alert('Error', 'Please turn on Bluetooth.');
+        Alert.alert('DIAGNOSTIC_BT_OFF', 'Please turn on Bluetooth.');
         setIsScanning(false);
         setModalVisible(false);
         return;
       }
 
-      // 1. Get already paired devices first (usually faster and more reliable)
       const bondedDevices = await RNBluetoothClassic.getBondedDevices();
       setDiscoveredDevices(bondedDevices);
 
-      // 2. Start discovery for new devices
       const devices = await RNBluetoothClassic.startDiscovery();
-
-      // Merge unique devices
       setDiscoveredDevices(prev => {
         const all = [...prev, ...devices];
         const unique = all.filter((dev, index, self) =>
@@ -222,99 +375,117 @@ export default function HomeScreen() {
       });
     } catch (err) {
       console.error(err);
-      Alert.alert('Error', 'Failed to scan for devices.');
+      Alert.alert('DIAGNOSTIC_DISCOVERY_CATCH', 'Failed to scan for devices.');
     } finally {
       setIsScanning(false);
     }
   };
 
   const connectToDevice = async (selectedDevice: any) => {
-    if (Platform.OS === 'web') return;
+    if (Platform.OS === 'web' || isScanning) return;
+
+    const enabled = await RNBluetoothClassic.isBluetoothEnabled();
+    if (!enabled) {
+      Alert.alert('Bluetooth Off', 'Please turn on Bluetooth before connecting.');
+      return;
+    }
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setModalVisible(false);
     setConnectionStatus('connecting');
+    setIsScanning(true);
     try {
-      // 1. Ensure any previous connection to THIS device is closed
-      const isConnected = await selectedDevice.isConnected();
-      if (isConnected) {
-        await selectedDevice.disconnect();
-        await new Promise(resolve => setTimeout(resolve, 500));
-      }
-
-      // 2. Cancel discovery before connecting for better success rate
-      await RNBluetoothClassic.cancelDiscovery();
-      // 3. Small delay after canceling discovery (allows hardware to reset)
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // 4. Try connecting with RFCOMM and SPP UUID
-      console.log(`Attempting connection to ${selectedDevice.address} with SPP UUID...`);
-      let connected = false;
       try {
-        connected = await selectedDevice.connect({
-          connectorType: 'rfcomm',
-          secure: false,
-          connectionUuid: SPP_UUID,
-        });
+        const isConnected = await selectedDevice.isConnected();
+        if (isConnected) {
+          await selectedDevice.disconnect();
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       } catch (e) {
-        console.log('SPP connection failed, trying generic fallback...');
-        await new Promise(resolve => setTimeout(resolve, 500));
-        connected = await selectedDevice.connect();
+        console.log('Pre-connect cleanup failed:', e);
       }
 
-      if (connected) {
-        setDevice(selectedDevice);
+      try {
+        await RNBluetoothClassic.cancelDiscovery();
+      } catch (e) {
+        console.log('Cancel discovery failed:', e);
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1500));
+
+      console.log(`Attempting unified connection to ${selectedDevice.address}...`);
+
+      const conn = await RNBluetoothClassic.connectToDevice(selectedDevice.address, {
+        connectorType: 'rfcomm',
+        secure: false, // Insecure helps POS connections initial handshake
+        connectionUuid: SPP_UUID,
+      });
+
+      const connectedDeviceObj = await resolveConnectedDevice(selectedDevice.address, conn);
+
+      if (connectedDeviceObj) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        manualDisconnectRef.current = false;
+        setDevice(connectedDeviceObj);
         setConnectionStatus('connected');
-        saveLastDevice(selectedDevice.address);
+        saveLastDevice(connectedDeviceObj.address);
+        initiateHandshake(connectedDeviceObj);
       } else {
-        setConnectionStatus('notConnected');
-        Alert.alert('Failed', 'Could not connect. Please ensure device is paired in your phone Bluetooth settings.');
+        throw new Error('Device failed to report connected state.');
       }
     } catch (err: any) {
-      console.error('Connection error:', err);
+      console.error('Final Connection error:', err);
       setConnectionStatus('notConnected');
-
-      // Provide more helpful error messages based on the exception
-      let errorMsg = err.message || 'An error occurred.';
-      if (errorMsg.includes('read failed')) {
-        errorMsg = 'Connection reset by POS machine. Please restart the POS Bluetooth or unpair/repair the device.';
-      } else if (errorMsg.includes('Service discovery failed')) {
-        errorMsg = 'Could not find POS service. Ensure the machine is in SPP/Serial mode.';
-      }
-
-      Alert.alert('Connection Error', errorMsg);
+      Alert.alert('Connection Failure', err.message || 'Failed to connect. Check machine state.');
+    } finally {
+      setIsScanning(false);
     }
   };
+
+  const disconnectDevice = async () => {
+    if (!device) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    manualDisconnectRef.current = true;
+    try {
+      await RNBluetoothClassic.disconnectFromDevice(device.address);
+      setDevice(null);
+      setConnectionStatus('notConnected');
+    } catch (err) {
+      console.error('Disconnect failed', err);
+      setDevice(null);
+      setConnectionStatus('notConnected');
+    }
+  };
+
   const sendWeight = async (weight: string | number) => {
     if (Platform.OS === 'web') {
       Alert.alert('Not Supported', 'Sending data is only available on physical devices.');
       return;
     }
     if (!device) {
-      Alert.alert('Error', t.notConnected);
+      Alert.alert('DIAGNOSTIC_SEND_NO_DEVICE', t.notConnected);
       return;
     }
 
     const weightVal = typeof weight === 'string' ? weight : weight.toString();
-    const time = new Date().toLocaleTimeString();
+    const modePrefix = weightMode === 'selling' ? 'S:' : 'R:';
 
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setIsSending(true);
     try {
-      await device.write(`${weightVal}\n`);
-      const newLog = {
-        id: Date.now(),
-        weight: weightVal,
-        time,
-        status: 'sent'
-      };
-      setActivityLog([newLog, ...activityLog.slice(0, 9)]);
-      if (typeof weight === 'string') setManualWeight('');
+      if (device) {
+        await RNBluetoothClassic.writeToDevice(device.address, `${modePrefix}${weightVal}\n`);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        addLog(weightMode === 'selling' ? 'Selling' : 'Remaining', weightVal, 'sent');
+        if (typeof weight === 'string') setManualWeight('');
+      }
     } catch (err) {
-      const newLog = {
-        id: Date.now(),
-        weight: weightVal,
-        time,
-        status: 'failed'
-      };
-      setActivityLog([newLog, ...activityLog.slice(0, 9)]);
-      Alert.alert('Error', 'Failed to send data.');
+      console.error('Send weight failed:', err);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      addLog(weightMode === 'selling' ? 'Selling' : 'Remaining', weightVal, 'failed');
+      Alert.alert('DIAGNOSTIC_SEND_CATCH', 'Failed to send data. Check Bluetooth connection.');
+    } finally {
+      setIsSending(false);
     }
   };
 
@@ -322,14 +493,17 @@ export default function HomeScreen() {
     setLang(lang === 'en' ? 'ta' : 'en');
   };
 
-  const renderWeightButton = ({ item }: { item: number }) => (
-    <TouchableOpacity
-      activeOpacity={0.7}
-      style={styles.weightButton}
-      onPress={() => sendWeight(item)}
-    >
-      <Text style={styles.weightButtonText}>{item}</Text>
-    </TouchableOpacity>
+  const renderWeightButton = ({ item, index }: { item: number, index: number }) => (
+    <Animated.View entering={FadeInDown.delay(index * 20)} key={item.toString()}>
+      <TouchableOpacity
+        activeOpacity={0.7}
+        style={styles.weightButton}
+        onPress={() => sendWeight(item)}
+        disabled={isSending || connectionStatus !== 'connected'}
+      >
+        <Text style={[styles.weightButtonText, (isSending || connectionStatus !== 'connected') && { color: '#999' }]}>{item}</Text>
+      </TouchableOpacity>
+    </Animated.View>
   );
 
   return (
@@ -337,7 +511,6 @@ export default function HomeScreen() {
       <SafeAreaView style={styles.container}>
         <StatusBar barStyle="light-content" backgroundColor="#1a237e" />
 
-        {/* Animated Background Header */}
         <LinearGradient
           colors={['#1a237e', '#3949ab']}
           style={styles.topGradient}
@@ -368,20 +541,55 @@ export default function HomeScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* Action Area */}
           <Animated.View entering={FadeInUp.delay(200)} style={styles.actionContainer}>
-            <TouchableOpacity onPress={startDiscovery}>
-              <LinearGradient
-                colors={['#4caf50', '#388e3c']}
-                style={styles.connectBtnGradient}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                <Text style={styles.connectBtnText}>{t.connectBtn}</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+            {connectionStatus === 'connected' ? (
+              <TouchableOpacity onPress={disconnectDevice}>
+                <LinearGradient
+                  colors={['#f44336', '#d32f2f']}
+                  style={styles.connectBtnGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <Text style={styles.connectBtnText}>{t.disconnect}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={startDiscovery}>
+                <LinearGradient
+                  colors={['#4caf50', '#388e3c']}
+                  style={styles.connectBtnGradient}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                >
+                  <Text style={styles.connectBtnText}>{isScanning ? t.connecting : t.connectBtn}</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
 
-            {/* Manual Input Section */}
+            {connectionStatus === 'connected' && (
+              <Animated.View entering={FadeInDown.delay(300)} style={styles.modeContainer}>
+                <Text style={styles.modeLabel}>{t.mode}:</Text>
+                <View style={styles.modeToggleGroup}>
+                  <TouchableOpacity
+                    style={[styles.modeToggle, weightMode === 'selling' && styles.modeToggleActive]}
+                    onPress={() => setWeightMode('selling')}
+                  >
+                    <Text style={[styles.modeToggleText, weightMode === 'selling' && styles.modeToggleTextActive]}>
+                      {t.selling}
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.modeToggle, weightMode === 'remaining' && styles.modeToggleActive]}
+                    onPress={() => setWeightMode('remaining')}
+                  >
+                    <Text style={[styles.modeToggleText, weightMode === 'remaining' && styles.modeToggleTextActive]}>
+                      {t.remaining}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </Animated.View>
+            )}
+
             <Card style={styles.manualCard}>
               <Card.Content style={styles.manualContent}>
                 <TextInput
@@ -395,6 +603,8 @@ export default function HomeScreen() {
                   mode="contained"
                   onPress={() => sendWeight(manualWeight)}
                   style={styles.manualSendBtn}
+                  loading={isSending}
+                  disabled={isSending || !manualWeight || connectionStatus !== 'connected'}
                 >
                   {t.send}
                 </Button>
@@ -402,23 +612,21 @@ export default function HomeScreen() {
             </Card>
           </Animated.View>
 
-          {/* Quick Selection Title */}
           <View style={styles.labelContainer}>
             <Text style={styles.sectionLabel}>{t.selectWeight}</Text>
           </View>
 
-          {/* Weight Grid */}
-          <Animated.View entering={FadeInUp.delay(400)} style={styles.gridContainer}>
+          <View style={styles.gridContainer}>
             <FlatList
               data={WEIGHTS}
               renderItem={renderWeightButton}
               keyExtractor={(item) => item.toString()}
               numColumns={4}
               scrollEnabled={false}
+              columnWrapperStyle={{ justifyContent: 'space-between' }}
             />
-          </Animated.View>
+          </View>
 
-          {/* Activity Log */}
           <View style={styles.labelContainer}>
             <Text style={styles.sectionLabel}>{t.log}</Text>
           </View>
@@ -426,19 +634,27 @@ export default function HomeScreen() {
             {activityLog.length === 0 ? (
               <Text style={styles.noLogText}>{t.noLog}</Text>
             ) : (
-              activityLog.map((log) => (
-                <View key={log.id} style={styles.logItem}>
-                  <Text style={styles.logText}>{log.weight} kg</Text>
-                  <Text style={styles.logTime}>{log.time}</Text>
-                  <Text style={[styles.logStatus, { color: log.status === 'sent' ? '#4caf50' : '#f44336' }]}>
-                    {t[log.status as keyof typeof t]}
-                  </Text>
-                </View>
-              ))
+              <Animated.View layout={Layout.springify()}>
+                {activityLog.map((log) => (
+                  <Animated.View
+                    entering={FadeInDown}
+                    key={log.id}
+                    style={styles.logItem}
+                  >
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.logText}>{log.weight}</Text>
+                      <Text style={styles.logModeText}>{t[log.mode as keyof typeof t]}</Text>
+                    </View>
+                    <Text style={styles.logTime}>{log.time}</Text>
+                    <Text style={[styles.logStatus, { color: log.status === 'sent' ? '#4caf50' : '#f44336' }]}>
+                      {t[log.status as keyof typeof t]}
+                    </Text>
+                  </Animated.View>
+                ))}
+              </Animated.View>
             )}
           </Card>
 
-          {/* Instructions Box */}
           <Card style={styles.instructionCard}>
             <Card.Content>
               <Text style={styles.instructionTitle}>{t.instructions}:</Text>
@@ -452,7 +668,6 @@ export default function HomeScreen() {
           </Card>
         </ScrollView>
 
-        {/* Discovery Modal */}
         <Portal>
           <Modal
             visible={modalVisible}
@@ -570,89 +785,88 @@ const styles = StyleSheet.create({
   },
   sectionLabel: {
     fontSize: 18,
-    fontWeight: '700',
-    color: '#2c3e50',
+    fontWeight: 'bold',
+    color: '#1a237e',
   },
   gridContainer: {
     marginBottom: 20,
   },
   weightButton: {
-    flex: 1,
+    width: '22%',
+    aspectRatio: 1,
     backgroundColor: '#fff',
-    margin: 4,
-    height: 55,
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 10,
+    marginBottom: 12,
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    borderWidth: 1,
-    borderColor: '#eee',
+    shadowOpacity: 0.2,
+    shadowRadius: 1.5,
   },
   weightButtonText: {
-    color: '#1a237e',
     fontSize: 18,
     fontWeight: 'bold',
+    color: '#3949ab',
   },
   logCard: {
-    padding: 10,
     borderRadius: 12,
-    marginBottom: 25,
-    elevation: 1,
-    backgroundColor: '#fff',
+    elevation: 2,
+    padding: 15,
+    marginBottom: 20,
+  },
+  noLogText: {
+    textAlign: 'center',
+    color: '#999',
+    fontStyle: 'italic',
+    paddingVertical: 20,
   },
   logItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingVertical: 8,
+    alignItems: 'center',
+    paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#f1f1f1',
+    borderBottomColor: '#f0f0f0',
   },
   logText: {
+    fontSize: 16,
     fontWeight: '600',
-    fontSize: 14,
     color: '#333',
+  },
+  logModeText: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
   },
   logTime: {
     fontSize: 12,
     color: '#999',
   },
   logStatus: {
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 13,
+    fontWeight: 'bold',
     width: 60,
     textAlign: 'right',
   },
-  noLogText: {
-    textAlign: 'center',
-    color: '#999',
-    paddingVertical: 10,
-    fontStyle: 'italic',
-  },
   instructionCard: {
-    backgroundColor: '#f1f8e9',
     borderRadius: 12,
-    borderLeftWidth: 5,
-    borderLeftColor: '#4caf50',
-    elevation: 0,
+    backgroundColor: '#e8eaf6',
   },
   instructionTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#2e7d32',
-    marginBottom: 8,
+    color: '#1a237e',
+    marginBottom: 10,
   },
   instructionList: {
-    marginLeft: 5,
+    paddingLeft: 5,
   },
   instructionItem: {
     fontSize: 14,
-    color: '#388e3c',
-    marginBottom: 4,
-    fontWeight: '500',
+    color: '#3949ab',
+    marginBottom: 5,
   },
   modalContent: {
     backgroundColor: 'white',
@@ -672,5 +886,44 @@ const styles = StyleSheet.create({
     marginVertical: 25,
     fontSize: 16,
     color: '#666',
+  },
+  modeContainer: {
+    marginBottom: 15,
+  },
+  modeLabel: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 8,
+    marginLeft: 4,
+  },
+  modeToggleGroup: {
+    flexDirection: 'row',
+    backgroundColor: '#eee',
+    borderRadius: 8,
+    padding: 4,
+  },
+  modeToggle: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  modeToggleActive: {
+    backgroundColor: '#fff',
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+  },
+  modeToggleText: {
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '500',
+  },
+  modeToggleTextActive: {
+    color: '#1a237e',
+    fontWeight: 'bold',
   },
 });
