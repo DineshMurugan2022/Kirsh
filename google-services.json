@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "708694703565",
+    "project_id": "dineshkirshvijay",
+    "storage_bucket": "dineshkirshvijay.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:708694703565:android:1182abe5d75aff2044d884",
+        "android_client_info": {
+          "package_name": "dinesh.kirsh.vijay"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBOLkbQayjt3CMdX9A_9fp9TIcDp6YFV9Q"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
