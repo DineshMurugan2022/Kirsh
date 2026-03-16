@@ -3,6 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Alert, Platform } from 'react-native';
 import RNBluetoothClassic from 'react-native-bluetooth-classic';
+import { firestore, firebase } from '@/src/firebase/config';
 
 const SPP_UUID = '00001101-0000-1000-8000-00805f9b34fb';
 
@@ -244,7 +245,7 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
     return `ST,GS,${padded}kg${eol}`;
   }, [eol]);
 
-  const sendWeight = async (weight: string | number) => {
+  const sendWeight = async (weight: string | number, userId?: string) => {
     if (!device) return;
     const weightValRaw = String(weight);
     const modePrefix = weightMode === 'selling' ? 'S:' : 'R:';
@@ -262,6 +263,23 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
         await RNBluetoothClassic.writeToDevice(device.address, `${modePrefix}${weightValRaw}${eol}`);
         addLog(weightMode === 'selling' ? 'Selling' : 'Remaining', weightValRaw, 'sent', weightMode);
       }
+      
+      // Firestore Logging
+      if (userId) {
+        try {
+          await firestore.collection('weight_history').add({
+            userId,
+            weight: typeof weight === 'number' ? weight : parseFloat(weight),
+            mode: weightMode,
+            timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+            status: 'sent',
+            protocol: weightProtocol
+          });
+        } catch (fErr) {
+          console.error('Firestore log failed:', fErr);
+        }
+      }
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       console.error('Send weight failed:', err);

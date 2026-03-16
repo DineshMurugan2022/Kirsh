@@ -15,7 +15,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Button, Card, Divider, List, Modal, PaperProvider, Portal } from 'react-native-paper';
+import { PaperProvider } from 'react-native-paper';
+import { Header } from '@/components/home/Header';
+import { StatusCard } from '@/components/home/StatusCard';
+import { WeightButton } from '@/components/home/WeightButton';
+import { ManualInput } from '@/components/home/ManualInput';
+import { RecentActivity } from '@/components/home/RecentActivity';
+import { Instructions } from '@/components/home/Instructions';
+import { BluetoothModal } from '@/components/home/BluetoothModal';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 
 import { useAuth } from '@/src/auth/AuthProvider';
@@ -86,7 +93,6 @@ export default function HomeScreen() {
     discoveredDevices,
     activityLog,
     isSending,
-    weightMode,
     startDiscovery,
     connectToDevice,
     disconnectDevice,
@@ -96,33 +102,9 @@ export default function HomeScreen() {
   const t = translations[lang];
 
   const handleSendWeight = async (weight: string | number) => {
-    await originalSendWeight(weight);
-    if (user && connectionStatus === 'connected') {
-      try {
-        await firestore.collection('weight_history').add({
-          userId: user.uid,
-          weight: typeof weight === 'number' ? weight : parseFloat(weight),
-          mode: weightMode,
-          timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-          status: 'sent',
-        });
-      } catch (err) {
-        console.error('Failed to save weight to Firestore:', err);
-      }
-    }
+    await originalSendWeight(weight, user?.uid);
     if (typeof weight === 'string') setManualWeight('');
   };
-
-  const renderWeightButton = ({ item }: { item: number }) => (
-    <TouchableOpacity
-      activeOpacity={0.7}
-      style={styles.weightButton}
-      onPress={() => handleSendWeight(item)}
-      disabled={isSending || connectionStatus !== 'connected'}
-    >
-      <Text style={styles.weightButtonText}>{item}</Text>
-    </TouchableOpacity>
-  );
 
   return (
     <PaperProvider>
@@ -131,28 +113,27 @@ export default function HomeScreen() {
         <Stack.Screen options={{ headerShown: false }} />
 
         <ScrollView contentContainerStyle={styles.scrollContent}>
-          {/* Status Card */}
-          <View style={styles.headerCard}>
-            <View style={styles.headerRow}>
-              <View style={{ flex: 1, alignItems: 'center' }}>
-                <Text style={styles.headerTitle}>{t.title}</Text>
-                <Text style={styles.headerStatusText}>
-                  {t.status}:{' '}
-                  <Text style={{ 
-                    fontWeight: 'bold', 
-                    color: connectionStatus === 'connected' ? '#4caf50' : '#f44336' 
-                  }}>
-                    {t[connectionStatus as keyof typeof t]}
-                  </Text>
-                </Text>
-              </View>
-              <TouchableOpacity style={styles.langBubble} onPress={() => setLang(lang === 'en' ? 'ta' : 'en')}>
-                <Text style={styles.langText}>{lang === 'en' ? 'தமிழ்' : 'English'}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          {isAdmin && (
+            <TouchableOpacity 
+              style={styles.adminButton} 
+              onPress={() => router.push('/(admin)')}
+            >
+              <Text style={styles.adminButtonText}>OPEN ADMIN DASHBOARD</Text>
+            </TouchableOpacity>
+          )}
 
-          {/* Connect Button */}
+          <Header 
+            title={t.title} 
+            lang={lang} 
+            onToggleLang={() => setLang(lang === 'en' ? 'ta' : 'en')} 
+          />
+
+          <StatusCard 
+            label={t.status} 
+            status={t[connectionStatus as keyof typeof t]} 
+            isConnected={connectionStatus === 'connected'} 
+          />
+
           <TouchableOpacity
             style={[styles.connectButton, connectionStatus === 'connected' && { backgroundColor: '#f44336' }]}
             onPress={() => {
@@ -168,30 +149,26 @@ export default function HomeScreen() {
             </Text>
           </TouchableOpacity>
 
-          {/* Manual Weight Input */}
-          <View style={styles.manualEntryCard}>
-            <TextInput
-              placeholder={t.manualInput}
-              style={styles.manualInput}
-              keyboardType="decimal-pad"
-              value={manualWeight}
-              onChangeText={setManualWeight}
-            />
-            <TouchableOpacity 
-              style={[styles.sendButton, (!manualWeight || connectionStatus !== 'connected') && { opacity: 0.5 }]} 
-              onPress={() => handleSendWeight(manualWeight)}
-              disabled={!manualWeight || connectionStatus !== 'connected'}
-            >
-              <Text style={styles.sendButtonText}>{t.send}</Text>
-            </TouchableOpacity>
-          </View>
+          <ManualInput 
+            placeholder={t.manualInput} 
+            buttonText={t.send} 
+            value={manualWeight} 
+            onChangeText={setManualWeight} 
+            onSend={() => handleSendWeight(manualWeight)} 
+            disabled={connectionStatus !== 'connected' || isSending} 
+          />
 
-          {/* Weight Selection Grid */}
           <Text style={styles.sectionTitle}>{t.selectWeight}</Text>
           <View style={styles.gridWrapper}>
             <FlatList
               data={WEIGHTS}
-              renderItem={renderWeightButton}
+              renderItem={({ item }) => (
+                <WeightButton 
+                  weight={item} 
+                  onPress={() => handleSendWeight(item)} 
+                  disabled={connectionStatus !== 'connected' || isSending} 
+                />
+              )}
               keyExtractor={(item) => item.toString()}
               numColumns={4}
               scrollEnabled={false}
@@ -199,179 +176,60 @@ export default function HomeScreen() {
             />
           </View>
 
-          {/* Recent Activity Log */}
-          {activityLog.length > 0 && (
-            <>
-              <Text style={styles.sectionTitle}>{t.log}</Text>
-              <Card style={styles.logCard}>
-                {activityLog.map((log: LogEntry) => (
-                  <View key={log.id} style={styles.logItem}>
-                    <Text style={styles.logText}>{log.weight} kg</Text>
-                    <Text style={styles.logTime}>{log.time}</Text>
-                    <Text style={[styles.logStatus, { color: log.status === 'sent' ? '#4caf50' : '#f44336' }]}>
-                      {t[log.status as keyof typeof t]}
-                    </Text>
-                  </View>
-                ))}
-              </Card>
-            </>
-          )}
+          <RecentActivity 
+            title={t.log} 
+            logs={activityLog} 
+            translations={{ sent: t.sent, failed: t.failed }} 
+          />
 
-          {/* Instructions Box */}
-          <View style={styles.instructionsBox}>
-            <Text style={styles.instructionsTitle}>{t.instructions}</Text>
-            <Text style={styles.instructionText}>{t.step1}</Text>
-            <Text style={styles.instructionText}>{t.step2}</Text>
-            <Text style={styles.instructionText}>{t.step3}</Text>
-            <Text style={styles.instructionText}>{t.step4}</Text>
-          </View>
+          <Instructions 
+            title={t.instructions} 
+            steps={[t.step1, t.step2, t.step3, t.step4]} 
+          />
         </ScrollView>
 
-        <Portal>
-          <Modal
-            visible={modalVisible}
-            onDismiss={() => setModalVisible(false)}
-            contentContainerStyle={styles.modalContent}
-          >
-            <Text style={styles.modalTitle}>Select Device</Text>
-            <Divider />
-            {isScanning ? (
-              <Text style={styles.scanningText}>Scanning...</Text>
-            ) : discoveredDevices.length === 0 ? (
-              <Text style={styles.scanningText}>No devices found.</Text>
-            ) : (
-              <ScrollView style={{ maxHeight: 300 }}>
-                {discoveredDevices.map((d, index) => (
-                  <List.Item
-                    key={index}
-                    title={d.name || 'Unknown Device'}
-                    description={d.address}
-                    onPress={() => {
-                      connectToDevice(d);
-                      setModalVisible(false);
-                    }}
-                    left={(props) => <List.Icon {...props} icon="bluetooth" />}
-                  />
-                ))}
-              </ScrollView>
-            )}
-            <Button onPress={() => setModalVisible(false)}>Cancel</Button>
-          </Modal>
-        </Portal>
+        <BluetoothModal 
+          visible={modalVisible} 
+          onDismiss={() => setModalVisible(false)} 
+          isScanning={isScanning} 
+          devices={discoveredDevices} 
+          onSelectDevice={(d) => {
+            connectToDevice(d);
+            setModalVisible(false);
+          }} 
+        />
       </SafeAreaView>
     </PaperProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#f5f5f5' },
-  scrollContent: { padding: 15 },
+  container: { flex: 1, backgroundColor: '#f8f9fa' },
+  scrollContent: { padding: 20 },
   adminButton: {
     backgroundColor: '#ff9800',
-    paddingVertical: 10,
-    borderRadius: 5,
+    padding: 16,
+    borderRadius: 12,
     alignItems: 'center',
-    marginBottom: 10,
-  },
-  adminButtonText: { color: '#fff', fontWeight: 'bold', fontSize: 16 },
-  headerCard: {
-    backgroundColor: '#fff',
-    padding: 20,
-    borderRadius: 10,
-    ...Platform.select({
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 4 },
-      android: { elevation: 5 },
-      web: { boxShadow: '0px 4px 8px rgba(0,0,0,0.1)' },
-    }),
     marginBottom: 20,
+    elevation: 4,
+    boxShadow: '0px 4px 12px rgba(255, 152, 0, 0.3)',
   },
-  headerRow: { flexDirection: 'row', alignItems: 'center' },
-  headerTitle: { fontSize: 26, fontWeight: 'bold', color: '#333' },
-  headerStatusText: { fontSize: 16, color: '#666', marginTop: 5 },
-  langBubble: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#3f51b5',
-    backgroundColor: '#3f51b5',
+  adminButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
   },
-  langText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
   connectButton: {
     backgroundColor: '#4caf50',
-    paddingVertical: 14,
-    borderRadius: 5,
+    paddingVertical: 16,
+    borderRadius: 12,
     alignItems: 'center',
     marginBottom: 20,
-    ...Platform.select({
-      ios: { shadowColor: '#4caf50', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 2 },
-      android: { elevation: 2 },
-      web: { boxShadow: '0px 2px 4px rgba(76, 175, 80, 0.3)' },
-    }),
+    elevation: 4,
+    boxShadow: '0px 4px 12px rgba(76, 175, 80, 0.3)',
   },
-  connectButtonText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
-  manualEntryCard: {
-    backgroundColor: '#fff',
-    padding: 10,
-    borderRadius: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 20,
-    ...Platform.select({
-      android: { elevation: 3 },
-      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.1, shadowRadius: 2 },
-      web: { boxShadow: '0px 2px 4px rgba(0,0,0,0.05)' },
-    }),
-  },
-  manualInput: {
-    flex: 1,
-    height: 45,
-    borderWidth: 1,
-    borderColor: '#ddd',
-    borderRadius: 5,
-    paddingHorizontal: 10,
-    fontSize: 16,
-    backgroundColor: '#fff',
-  },
-  sendButton: {
-    backgroundColor: '#1a237e',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 5,
-    marginLeft: 10,
-  },
-  sendButtonText: { color: '#fff', fontWeight: 'bold' },
-  sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#1a237e', marginBottom: 15 },
+  connectButtonText: { color: '#fff', fontSize: 18, fontWeight: '900', letterSpacing: 1 },
+  sectionTitle: { fontSize: 20, fontWeight: 'bold', color: '#1a237e', marginBottom: 15 },
   gridWrapper: { marginBottom: 10 },
-  weightButton: {
-    width: '23%',
-    paddingVertical: 12,
-    backgroundColor: '#2196f3',
-    borderRadius: 5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  weightButtonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  logCard: { padding: 10, borderRadius: 5, marginBottom: 20 },
-  logItem: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#eee',
-  },
-  logText: { fontSize: 16, fontWeight: 'bold' },
-  logTime: { color: '#888' },
-  logStatus: { fontWeight: 'bold' },
-  instructionsBox: {
-    backgroundColor: '#e8f5e9',
-    padding: 15,
-    borderRadius: 5,
-    marginBottom: 40,
-  },
-  instructionsTitle: { fontSize: 18, fontWeight: 'bold', color: '#2e7d32', marginBottom: 10 },
-  instructionText: { fontSize: 15, color: '#333', marginBottom: 5 },
-  modalContent: { backgroundColor: 'white', padding: 20, margin: 20, borderRadius: 10 },
-  modalTitle: { fontSize: 20, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
-  scanningText: { textAlign: 'center', marginVertical: 20, color: '#666' },
 });
