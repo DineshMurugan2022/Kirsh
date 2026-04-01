@@ -1,11 +1,10 @@
-import { useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
-import { FlatList, SafeAreaView, StyleSheet, Text, View, Platform, TouchableOpacity } from 'react-native';
-import { Card, Divider, List, Searchbar, Button, Surface } from 'react-native-paper';
+import { FlatList, SafeAreaView, StyleSheet, Text, View, Platform } from 'react-native';
+import { Card, Searchbar, Button, Surface } from 'react-native-paper';
 import { firestore } from '@/src/firebase/config';
+import { ADMIN_EMAIL } from '@/src/auth/AuthProvider';
 
 export default function AdminDashboard() {
-  const router = useRouter();
   const [users, setUsers] = useState<any[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -27,9 +26,10 @@ export default function AdminDashboard() {
     }
   };
 
-  const filteredUsers = users.filter(u => 
-    (u.email || '').toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredUsers = users.filter((u) => {
+    const email = (u.email || '').toLowerCase();
+    return email !== ADMIN_EMAIL && email.includes(searchQuery.toLowerCase());
+  });
 
   return (
     <SafeAreaView style={styles.container}>

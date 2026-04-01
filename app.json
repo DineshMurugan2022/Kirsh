@@ -29,7 +29,10 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.BLUETOOTH_CONNECT",
         "android.permission.BLUETOOTH_SCAN",
-        "android.permission.BLUETOOTH_ADVERTISE"
+        "android.permission.BLUETOOTH_ADVERTISE",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.WAKE_LOCK"
       ],
       "package": "dinesh.kirsh.vijay"
     },

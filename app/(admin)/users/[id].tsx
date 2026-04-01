@@ -2,7 +2,7 @@ import { useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Button, Card, Divider, TextInput, Switch } from 'react-native-paper';
-import { firestore, firebase } from '@/src/firebase/config';
+import { firestore, timestampFromDate } from '@/src/firebase/config';
 
 export default function UserManagement() {
   const { id } = useLocalSearchParams();
@@ -47,7 +47,7 @@ export default function UserManagement() {
     nextMonth.setMonth(nextMonth.getMonth() + 1);
     
     await firestore.collection('users').doc(user.id).update({
-      subscriptionExpiresAt: firebase.firestore.Timestamp.fromDate(nextMonth),
+      subscriptionExpiresAt: timestampFromDate(nextMonth),
       isActive: true
     });
     Alert.alert('Success', 'Subscription extended by 30 days');

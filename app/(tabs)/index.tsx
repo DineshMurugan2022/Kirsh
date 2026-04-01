@@ -1,9 +1,9 @@
 // VERSION_V3_SIMPLE_UI
-import { firebase } from '@/src/firebase/config';
 import * as Haptics from 'expo-haptics';
 import { Stack, useRouter } from 'expo-router';
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
+  Alert,
   FlatList,
   Platform,
   SafeAreaView,
@@ -11,7 +11,6 @@ import {
   StatusBar,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -97,12 +96,29 @@ export default function HomeScreen() {
     connectToDevice,
     disconnectDevice,
     sendWeight: originalSendWeight,
+    checkLastDevice,
   } = useBluetoothManager(lang);
 
   const t = translations[lang];
 
-  const handleSendWeight = async (weight: string | number) => {
-    await originalSendWeight(weight, user?.uid);
+  useEffect(() => {
+    void checkLastDevice();
+  }, [checkLastDevice]);
+
+  const promptConnectFirst = () => {
+    Alert.alert('POS not connected', 'Please connect to the POS machine first.');
+    if (!isScanning) {
+      setModalVisible(true);
+      startDiscovery();
+    }
+  };
+
+  const handleSendWeight = (weight: string | number) => {
+    if (connectionStatus !== 'connected') {
+      promptConnectFirst();
+      return;
+    }
+    void originalSendWeight(weight, user?.uid);
     if (typeof weight === 'string') setManualWeight('');
   };
 
@@ -155,7 +171,7 @@ export default function HomeScreen() {
             value={manualWeight} 
             onChangeText={setManualWeight} 
             onSend={() => handleSendWeight(manualWeight)} 
-            disabled={connectionStatus !== 'connected' || isSending} 
+            disabled={isSending} 
           />
 
           <Text style={styles.sectionTitle}>{t.selectWeight}</Text>
@@ -166,7 +182,7 @@ export default function HomeScreen() {
                 <WeightButton 
                   weight={item} 
                   onPress={() => handleSendWeight(item)} 
-                  disabled={connectionStatus !== 'connected' || isSending} 
+                  disabled={isSending} 
                 />
               )}
               keyExtractor={(item) => item.toString()}

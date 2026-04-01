@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import { firestore, firebase } from '@/src/firebase/config';
+import { firestore, serverTimestamp } from '@/src/firebase/config';
 import { useAuth } from '@/src/auth/AuthProvider';
 
 export default function OtpScreen() {
@@ -32,7 +32,7 @@ export default function OtpScreen() {
         throw new Error('Invalid OTP.');
       }
       await firestore.collection('users').doc(user.uid).update({
-        lastOtpVerifiedAt: firebase.firestore.FieldValue.serverTimestamp(),
+        lastOtpVerifiedAt: serverTimestamp(),
       });
       await markOtpVerifiedLocally();
       router.replace('/(tabs)');
@@ -113,4 +113,3 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
 });
-

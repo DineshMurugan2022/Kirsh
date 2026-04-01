@@ -1,5 +1,6 @@
 import { Redirect, Tabs } from 'expo-router';
 import React from 'react';
+import { ActivityIndicator, View } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
@@ -17,14 +18,20 @@ export default function TabLayout() {
   if (status === 'blocked') {
     return <Redirect href="/(auth)/blocked" />;
   }
+  const theme = colorScheme === 'dark' ? 'dark' : 'light';
+
   if (status === 'loading') {
-    return null; // Or a loading spinner
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={Colors[theme].tint} />
+      </View>
+    );
   }
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: Colors[theme].tint,
         headerShown: false,
         tabBarButton: HapticTab,
       }}>
