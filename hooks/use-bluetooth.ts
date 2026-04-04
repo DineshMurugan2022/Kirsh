@@ -25,19 +25,78 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
   const [activityLog, setActivityLog] = useState<LogEntry[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [weightMode, setWeightMode] = useState<'selling' | 'remaining'>('selling');
-  const [lineEnding, setLineEnding] = useState<'lf' | 'crlf'>('lf');
-  const [connectionMode, setConnectionMode] = useState<'client' | 'server'>('server');
+  const [lineEnding, setLineEnding] = useState<'lf' | 'crlf'>('crlf');
+  const [connectionMode, setConnectionMode] = useState<'client' | 'server'>('client');
   const [isAccepting, setIsAccepting] = useState(false);
   const [weightProtocol, setWeightProtocol] = useState<'oasys_scale' | 'sr_prefix'>('sr_prefix');
   const [lastScaleFrame, setLastScaleFrame] = useState<string>('');
 
   const connectionStatusRef = useRef(connectionStatus);
   const manualDisconnectRef = useRef(false);
+  const heartbeatFailCountRef = useRef(0);
   const eol = lineEnding === 'crlf' ? '\r\n' : '\n';
+  const copy =
+    lang === 'ta'
+      ? {
+          connectionFailureTitle: '\u0b87\u0ba3\u0bc8\u0baa\u0bcd\u0baa\u0bc1 \u0ba4\u0bcb\u0bb2\u0bcd\u0bb5\u0bbf',
+          wrongBluetoothDeviceTitle: '\u0ba4\u0bb5\u0bb1\u0bbe\u0ba9 Bluetooth \u0b9a\u0bbe\u0ba4\u0ba9\u0bae\u0bcd',
+          wrongBluetoothDeviceMessage:
+            '\u0ba4\u0bc7\u0bb0\u0bcd\u0ba8\u0bcd\u0ba4\u0bc6\u0b9f\u0bc1\u0b95\u0bcd\u0b95\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f \u0b9a\u0bbe\u0ba4\u0ba9\u0bae\u0bcd \u0bae\u0bca\u0baa\u0bc8\u0bb2\u0bcd \u0b85\u0bb2\u0bcd\u0bb2\u0ba4\u0bc1 \u0bae\u0b9f\u0b95\u0bcd\u0b95\u0ba3\u0bbf\u0ba9\u0bbf \u0baa\u0bcb\u0bb2 \u0ba4\u0bc6\u0bb0\u0bbf\u0b95\u0bbf\u0bb1\u0ba4\u0bc1. \u0baa\u0b9f\u0bcd\u0b9f\u0bbf\u0baf\u0bb2\u0bbf\u0bb2\u0bbf\u0bb0\u0bc1\u0ba8\u0bcd\u0ba4\u0bc1 \u0b89\u0b99\u0bcd\u0b95\u0bb3\u0bcd POS \u0b9f\u0bc6\u0bb0\u0bcd\u0bae\u0bbf\u0ba9\u0bb2\u0bc8 \u0ba4\u0bc7\u0bb0\u0bcd\u0ba8\u0bcd\u0ba4\u0bc6\u0b9f\u0bc1\u0b95\u0bcd\u0b95\u0bb5\u0bc1\u0bae\u0bcd.',
+          genericConnectionMessage:
+            '\u0ba4\u0bc7\u0bb0\u0bcd\u0ba8\u0bcd\u0ba4\u0bc6\u0b9f\u0bc1\u0b95\u0bcd\u0b95\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f POS-\u0b89\u0b9f\u0ba9\u0bcd \u0b87\u0ba3\u0bc8\u0b95\u0bcd\u0b95 \u0bae\u0bc1\u0b9f\u0bbf\u0baf\u0bb5\u0bbf\u0bb2\u0bcd\u0bb2\u0bc8. POS \u0b85\u0bb0\u0bc1\u0b95\u0bbf\u0bb2\u0bcd \u0b89\u0bb3\u0bcd\u0bb3\u0ba4\u0bbe, Bluetooth \u0b87\u0baf\u0a95\u0bcd\u0b95\u0baa\u0bcd\u0baa\u0b9f\u0bcd\u0b9f\u0bc1\u0bb3\u0bcd\u0bb3\u0ba4\u0bbe, \u0bae\u0bb1\u0bcd\u0bb1 \u0b92\u0bb0\u0bc1 \u0b9a\u0bbe\u0ba4\u0ba9\u0bae\u0bcd \u0b8f\u0bb1\u0bcd\u0b95\u0ba9\u0bb5\u0bc7 \u0b87\u0ba3\u0bc8\u0ba8\u0bcd\u0ba4\u0bbf\u0bb0\u0bc1\u0b95\u0bcd\u0b95\u0bb5\u0bbf\u0bb2\u0bcd\u0bb2\u0bc8\u0baf\u0bbe \u0b8e\u0ba9\u0bcd\u0baa\u0ba4\u0bc8 \u0b9a\u0bb0\u0bbf\u0baa\u0bbe\u0bb0\u0bcd\u0ba4\u0bcd\u0ba4\u0bc1 \u0bae\u0bc0\u0ba3\u0bcd\u0b9f\u0bc1\u0bae\u0bcd \u0bae\u0bc1\u0baf\u0bb1\u0bcd\u0b9a\u0bbf\u0b95\u0bcd\u0b95\u0bb5\u0bc1\u0bae\u0bcd.',
+          inboundConnectionHint:
+            '\u0b89\u0b99\u0bcd\u0b95\u0bb3\u0bcd POS \u0b89\u0bb3\u0bcd\u0bb5\u0bb0\u0bc1\u0bae\u0bcd \u0b87\u0ba3\u0bc8\u0baa\u0bcd\u0baa\u0bc8 \u0b8e\u0ba4\u0bbf\u0bb0\u0bcd\u0baa\u0bbe\u0bb0\u0bcd\u0ba4\u0bcd\u0ba4\u0bbe\u0bb2\u0bcd, POS-\u0b87\u0bb2\u0bcd Bluetooth \u0ba4\u0bbf\u0bb0\u0bc8\u0baf\u0bc8 \u0ba4\u0bbf\u0bb1\u0ba8\u0bcd\u0ba4\u0bc1 \u0b95\u0ba9\u0bcd\u0ba9\u0bc6\u0b95\u0bcd\u0b9f\u0bcd \u0b89\u0bb1\u0bc1\u0ba4\u0bbf\u0baa\u0bcd\u0baa\u0b9f\u0bc1\u0ba4\u0bcd\u0ba4\u0bbf \u0bae\u0bc0\u0ba3\u0bcd\u0b9f\u0bc1\u0bae\u0bcd \u0bae\u0bc1\u0baf\u0bb1\u0bcd\u0b9a\u0bbf\u0b95\u0bcd\u0b95\u0bb5\u0bc1\u0bae\u0bcd.',
+          pairingHint:
+            '\u0baa\u0bb4\u0bc8\u0baf pairing-\u0b90 \u0b87\u0bb0\u0bc1 \u0b9a\u0bbe\u0ba4\u0ba9\u0b99\u0bcd\u0b95\u0bb3\u0bbf\u0bb2\u0bc1\u0bae\u0bcd \u0ba8\u0bc0\u0b95\u0bcd\u0b95\u0bbf, \u0bae\u0bc0\u0ba3\u0bcd\u0b9f\u0bc1\u0bae\u0bcd pair \u0b9a\u0bc6\u0baf\u0bcd\u0ba4\u0bc1 \u0baa\u0bbf\u0bb1\u0b95\u0bc1 \u0bae\u0bc1\u0baf\u0bb1\u0bcd\u0b9a\u0bbf\u0b95\u0bcd\u0b95\u0bb5\u0bc1\u0bae\u0bcd.',
+        }
+      : {
+          connectionFailureTitle: 'Connection Failure',
+          wrongBluetoothDeviceTitle: 'Wrong Bluetooth device',
+          wrongBluetoothDeviceMessage:
+            'Selected device looks like a mobile or laptop. Please choose your POS terminal from the list.',
+          genericConnectionMessage:
+            'Could not connect to the selected POS. Make sure the POS is nearby, Bluetooth is on, and it is not already connected to another phone.',
+          inboundConnectionHint:
+            'If your POS expects an incoming connection, open the Bluetooth screen on the POS, confirm connect there, and retry.',
+          pairingHint:
+            'If needed, remove the old pairing from both devices, pair again, and retry.',
+        };
   const formatOasysScaleFrame = useCallback((weight: number) => {
     const padded = weight.toFixed(3).padStart(8, ' ');
     return `ST,GS,${padded}kg${eol}`;
   }, [eol]);
+
+  const deviceRank = useCallback((dev: any) => {
+    const name = String(dev?.name ?? '').toLowerCase();
+    const majorClass = Number(dev?.deviceClass?.majorClass ?? -1);
+    const type = String(dev?.type ?? '').toUpperCase();
+
+    // Only hard-reject if BOTH the Bluetooth class confirms it's a phone/computer
+    // AND the device name matches common phone/laptop brands.
+    // This prevents blocking real POS terminals that share similar brand names.
+    const isPhoneClass = majorClass === 0x0200 || majorClass === 0x0100;
+    const isPhoneName = /(iphone|android|samsung|redmi|oppo|vivo|oneplus|realme|pixel|\bmi\b|moto|nokia|laptop|desktop|macbook)/i.test(name);
+    if (isPhoneClass && isPhoneName) return -3;
+
+    if (type === 'LOW_ENERGY') return -2;
+
+    let score = 0;
+    if (type === 'CLASSIC') score += 2;
+    if (/(pos|billing|weigh|scale|printer|pax|verifone|ingenico|newpos|sunmi|castles|wiseasy|terminal)/i.test(name)) score += 3;
+    if (majorClass >= 0) score += 1;
+    return score;
+  }, []);
+
+  const normalizeDiscovered = useCallback((devices: any[]) => {
+    const merged = devices.filter(Boolean).filter((dev, index, self) =>
+      dev?.address && index === self.findIndex((t) => t?.address === dev.address)
+    );
+
+    const filtered = merged.filter((dev) => deviceRank(dev) > -3);
+    const usable = filtered.length > 0 ? filtered : merged;
+
+    return usable.sort((a, b) => deviceRank(b) - deviceRank(a));
+  }, [deviceRank]);
 
   useEffect(() => {
     connectionStatusRef.current = connectionStatus;
@@ -48,21 +107,14 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
     const load = async () => {
       try {
         const stored = await AsyncStorage.getItem('pos_line_ending');
-        if (stored === 'lf') {
-          setLineEnding('lf');
-        } else if (stored === 'crlf') {
-          // Migration: LF works reliably with POS SPP parsers used in production.
-          setLineEnding('lf');
-          await AsyncStorage.setItem('pos_line_ending', 'lf');
-        }
+        if (stored === 'lf' || stored === 'crlf') setLineEnding(stored);
 
         const storedMode = await AsyncStorage.getItem('pos_connection_mode');
-        if (storedMode === 'server') {
-          setConnectionMode('server');
-        } else if (storedMode === 'client') {
-          // Migration: prefer POS-initiated (server/accept) first.
-          setConnectionMode('server');
-          await AsyncStorage.setItem('pos_connection_mode', 'server');
+        if (storedMode === 'server' || storedMode === 'client') {
+          setConnectionMode('client');
+          if (storedMode !== 'client') {
+            await AsyncStorage.setItem('pos_connection_mode', 'client');
+          }
         }
         
         const storedProto = await AsyncStorage.getItem('pos_weight_protocol');
@@ -102,10 +154,15 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
   const initiateHandshake = useCallback(async (connectedDevice: any) => {
     if (!connectedDevice) return;
 
-    console.log(`[Handshake] Starting aggressive EWS sequence for ${connectedDevice.address}...`);
+    if (weightProtocol !== 'oasys_scale') {
+      setIsHeartbeatActive(false);
+      return;
+    }
+
+    console.log(`[Handshake] Starting OASYS handshake for ${connectedDevice.address}...`);
     let pulseCount = 0;
-    const maxPulses = 5;
-    const signals = ['EWS\n', 'EWS\r\n', 'READY\n', 'READY\r\n', '\n'];
+    const maxPulses = 2;
+    const signals = [`EWS${eol}`];
 
     const sendPulse = async () => {
       if (pulseCount >= maxPulses) {
@@ -117,21 +174,21 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
 
       try {
         for (const signal of signals) {
-          await RNBluetoothClassic.writeToDevice(connectedDevice.address, signal);
+          await RNBluetoothClassic.writeToDevice(connectedDevice.address, signal, 'ascii');
           console.log(`[Handshake] Sent pulse ${pulseCount + 1}: ${JSON.stringify(signal)}`);
-          await new Promise(resolve => setTimeout(resolve, 200));
+          await new Promise(resolve => setTimeout(resolve, 180));
         }
         pulseCount++;
-        setTimeout(sendPulse, 2000);
+        setTimeout(sendPulse, 1200);
       } catch (err) {
         console.error('[Handshake] Pulse failed:', err);
         pulseCount++;
-        if (pulseCount < maxPulses) setTimeout(sendPulse, 2000);
+        if (pulseCount < maxPulses) setTimeout(sendPulse, 1200);
       }
     };
 
     setTimeout(sendPulse, 500);
-  }, [addLog, eol]);
+  }, [addLog, eol, weightProtocol]);
 
   const isSocketOpen = useCallback(async (address?: string | null) => {
     if (!address) return false;
@@ -181,6 +238,28 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
       }
     }
   }, []);
+
+  const buildConnectionErrorMessage = useCallback((selectedDevice: any, errors: any[]) => {
+    const rawMessages = errors
+      .map((error) => (error instanceof Error ? error.message : String(error ?? '')))
+      .filter(Boolean);
+    const combined = rawMessages.join(' ');
+    const label = selectedDevice?.name ? `"${selectedDevice.name}"` : 'the selected POS';
+
+    if (/timed out waiting for pos|unable to accept pos connection/i.test(combined)) {
+      return `${copy.genericConnectionMessage} ${copy.inboundConnectionHint}`;
+    }
+
+    if (/pair|bond/i.test(combined)) {
+      return `${copy.genericConnectionMessage} ${copy.pairingHint}`;
+    }
+
+    if (/socket closed immediately|unstable|not connected|broken pipe|closed/i.test(combined)) {
+      return `Bluetooth connected to ${label}, but the POS closed the connection immediately. ${copy.inboundConnectionHint}`;
+    }
+
+    return `${copy.genericConnectionMessage} ${copy.inboundConnectionHint}`;
+  }, [copy.genericConnectionMessage, copy.inboundConnectionHint, copy.pairingHint]);
 
   const acceptWithFallback = useCallback(
     async (expectedAddress?: string) => {
@@ -316,26 +395,32 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
 
     const address = connectedDevice.address;
     const writers = [
+      async () => RNBluetoothClassic.writeToDevice(address, payload, 'ascii'),
       async () => {
         if (typeof connectedDevice?.write !== 'function') return false;
         return connectedDevice.write(payload, 'ascii');
       },
-      async () => RNBluetoothClassic.writeToDevice(address, payload, 'ascii'),
     ];
 
     let lastErr: any = null;
-    for (const write of writers) {
-      try {
-        const written = await write();
-        if (written !== false) return true;
-      } catch (err) {
-        lastErr = err;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      for (const write of writers) {
+        try {
+          const written = await write();
+          if (written !== false) {
+            const stillOpen = await isSocketOpen(address);
+            if (stillOpen) return true;
+          }
+        } catch (err) {
+          lastErr = err;
+        }
       }
+      await new Promise((resolve) => setTimeout(resolve, 120));
     }
 
     if (lastErr) throw lastErr;
     throw new Error('Bluetooth write failed.');
-  }, []);
+  }, [isSocketOpen]);
 
   const verifyConnectedDevice = useCallback(async (connectedDevice: any) => {
     if (!connectedDevice?.address) return false;
@@ -345,18 +430,13 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
     if (!socketOpen) return false;
 
     try {
-      const probes =
-        weightProtocol === 'oasys_scale'
-          ? [formatOasysScaleFrame(0)]
-          : ['EWS\n', 'EWS\r\n'];
-
-      for (const probe of probes) {
-        await writeToConnectedDevice(connectedDevice, probe);
+      if (weightProtocol === 'oasys_scale') {
+        await writeToConnectedDevice(connectedDevice, formatOasysScaleFrame(0));
         await new Promise((resolve) => setTimeout(resolve, 120));
-        const stillOpen = await isSocketOpen(address);
-        if (!stillOpen) return false;
+      } else {
+        // For SR/POS protocol, avoid noisy probes that can destabilize older terminals.
+        await new Promise((resolve) => setTimeout(resolve, 120));
       }
-
       return await isSocketOpen(address);
     } catch (err) {
       console.log('Connection probe failed:', err);
@@ -500,37 +580,51 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
   };
 
   const connectToDevice = async (selectedDevice: any) => {
-    if (Platform.OS === 'web' || isScanning || !selectedDevice?.address) return;
+    if (Platform.OS === 'web' || !selectedDevice?.address) return false;
+
+    if (deviceRank(selectedDevice) <= -3) {
+      Alert.alert(
+        copy.wrongBluetoothDeviceTitle,
+        copy.wrongBluetoothDeviceMessage
+      );
+      return false;
+    }
 
     const ready = await ensureBluetoothReady(false);
     if (!ready) {
       setConnectionStatus('notConnected');
-      return;
+      return false;
     }
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setConnectionStatus('connecting');
-    setIsScanning(true);
+    // Stop any ongoing discovery so we can open a data socket
+    await RNBluetoothClassic.cancelDiscovery().catch(() => false);
+    setIsScanning(false);
     try {
-      await RNBluetoothClassic.cancelDiscovery().catch(() => false);
       await ensurePaired(selectedDevice);
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Always try direct client (outbound) connection first.
+      // The server/accept fallback requires the POS to initiate, which most POS
+      // billing terminals do NOT do — they wait for the phone to connect.
       let connectedDeviceObj: any = null;
       const errors: any[] = [];
-      const connectionOrder: Array<'server' | 'client'> =
-        connectionMode === 'client' ? ['client', 'server'] : ['server', 'client'];
 
-      for (const mode of connectionOrder) {
+      try {
+        connectedDeviceObj = await connectWithFallback(selectedDevice.address, selectedDevice);
+      } catch (err) {
+        errors.push(err);
+        console.log('CLIENT connection attempt failed:', err);
+      }
+
+      // Only fall back to server/accept mode if direct connect completely failed.
+      if (!connectedDeviceObj) {
         try {
-          if (mode === 'server') {
-            connectedDeviceObj = await acceptWithFallback(selectedDevice.address);
-          } else {
-            connectedDeviceObj = await connectWithFallback(selectedDevice.address, selectedDevice);
-          }
-          if (connectedDeviceObj) break;
+          connectedDeviceObj = await acceptWithFallback(selectedDevice.address);
         } catch (err) {
           errors.push(err);
-          console.log(`${mode.toUpperCase()} connection attempt failed:`, err);
+          console.log('SERVER accept attempt failed:', err);
         }
       }
 
@@ -541,12 +635,14 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
         }
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         manualDisconnectRef.current = false;
+        heartbeatFailCountRef.current = 0;
         setDevice(connectedDeviceObj);
         setConnectionStatus('connected');
         saveLastDevice(connectedDeviceObj.address);
         initiateHandshake(connectedDeviceObj);
+        return true;
       } else {
-        throw errors[0] || new Error('Device failed to report connected state.');
+        throw errors[0] || new Error(buildConnectionErrorMessage(selectedDevice, errors));
       }
     } catch (err: any) {
       console.error('Final Connection error:', err);
@@ -555,10 +651,13 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
       setConnectionStatus('notConnected');
       setIsHeartbeatActive(false);
       setIsAccepting(false);
-      Alert.alert('Connection Failure', err.message || 'Failed to connect.');
+      Alert.alert(
+        copy.connectionFailureTitle,
+        buildConnectionErrorMessage(selectedDevice, [err])
+      );
+      return false;
     } finally {
       setIsAccepting(false);
-      setIsScanning(false);
     }
   };
 
@@ -574,12 +673,9 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
     setIsScanning(true);
     try {
       const bondedDevices = await RNBluetoothClassic.getBondedDevices();
-      setDiscoveredDevices(bondedDevices);
+      setDiscoveredDevices(normalizeDiscovered(bondedDevices));
       const devices = await RNBluetoothClassic.startDiscovery();
-      setDiscoveredDevices(prev => {
-        const all = [...prev, ...devices];
-        return all.filter((dev, index, self) => index === self.findIndex((t) => t.address === dev.address));
-      });
+      setDiscoveredDevices(prev => normalizeDiscovered([...prev, ...devices]));
     } catch (err) {
       console.error(err);
       Alert.alert('Discovery failed', 'Could not scan for Bluetooth devices. Please try again.');
@@ -591,7 +687,6 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
   const sendWeight = async (weight: string | number, userId?: string) => {
     if (!device) return;
     const weightValRaw = String(weight);
-    const modePrefix = weightMode === 'selling' ? 'S:' : 'R:';
     const parsedWeight = typeof weight === 'number' ? weight : parseFloat(weightValRaw);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIsSending(true);
@@ -609,7 +704,12 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
         logWeight = String(numeric);
         logMode = 'oasys_scale';
       } else {
-        payload = `${modePrefix}${weightValRaw}${eol}`;
+        const normalized = weightValRaw.trim().replace(',', '.');
+        if (!normalized || isNaN(Number(normalized))) throw new Error('Invalid weight');
+        // POS billing terminals expect a plain numeric value terminated with CRLF.
+        // e.g. "5.00\r\n" — this is the standard format most billing terminals read.
+        const formatted = parseFloat(normalized).toFixed(2);
+        payload = `${formatted}\r\n`;
         logMode = weightMode;
       }
 
@@ -623,6 +723,7 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
       }
 
       await writeToConnectedDevice(device, payload);
+      heartbeatFailCountRef.current = 0;
       addLog(
         logMode === 'oasys_scale' ? 'Scale' : (weightMode === 'selling' ? 'Selling' : 'Remaining'),
         logWeight,
@@ -663,24 +764,24 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
   // Heartbeat
   useEffect(() => {
     let interval: any;
-    if (connectionStatus === 'connected' && isHeartbeatActive && device) {
+    if (connectionStatus === 'connected' && isHeartbeatActive && device && weightProtocol === 'oasys_scale') {
       interval = setInterval(async () => {
         try {
-          if (weightProtocol === 'oasys_scale') {
-            const frame = lastScaleFrame || formatOasysScaleFrame(0);
-            await RNBluetoothClassic.writeToDevice(device.address, frame);
-          } else {
-            await RNBluetoothClassic.writeToDevice(device.address, `EWS${eol}`);
-          }
+          const frame = lastScaleFrame || formatOasysScaleFrame(0);
+          await writeToConnectedDevice(device, frame);
+          heartbeatFailCountRef.current = 0;
         } catch {
-          setDevice(null);
-          setConnectionStatus('notConnected');
-          setIsHeartbeatActive(false);
+          heartbeatFailCountRef.current += 1;
+          if (heartbeatFailCountRef.current >= 3) {
+            setDevice(null);
+            setConnectionStatus('notConnected');
+            setIsHeartbeatActive(false);
+          }
         }
-      }, weightProtocol === 'oasys_scale' ? 1000 : 3000);
+      }, 1500);
     }
     return () => clearInterval(interval);
-  }, [connectionStatus, device, formatOasysScaleFrame, isHeartbeatActive, lastScaleFrame, weightProtocol, eol]);
+  }, [connectionStatus, device, formatOasysScaleFrame, isHeartbeatActive, lastScaleFrame, weightProtocol, writeToConnectedDevice]);
 
   useEffect(() => {
     return () => {

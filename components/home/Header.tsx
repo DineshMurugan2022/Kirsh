@@ -12,7 +12,7 @@ export const Header = ({ title, lang, onToggleLang }: HeaderProps) => {
     <View style={styles.header}>
       <Text style={styles.title}>{title}</Text>
       <TouchableOpacity style={styles.langBubble} onPress={onToggleLang}>
-        <Text style={styles.langText}>{lang === 'en' ? 'தமிழ்' : 'English'}</Text>
+        <Text style={styles.langText}>{lang === 'en' ? '\u0ba4\u0bae\u0bbf\u0bb4\u0bcd' : 'English'}</Text>
       </TouchableOpacity>
     </View>
   );
