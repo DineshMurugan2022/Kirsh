@@ -38,6 +38,34 @@ export default function LoginScreen() {
     }
   };
 
+  const onForgotPassword = () => {
+    Alert.prompt(
+      'Reset Password',
+      'Enter your email address to receive a password reset link.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Send',
+          onPress: async (inputEmail?: string) => {
+            const target = (inputEmail ?? email).trim();
+            if (!target) {
+              Alert.alert('Reset Password', 'Please enter your email address.');
+              return;
+            }
+            try {
+              await (auth as any).sendPasswordResetEmail(target);
+              Alert.alert('Email sent', `Password reset link sent to ${target}.`);
+            } catch (err: any) {
+              Alert.alert('Error', err?.message || 'Failed to send reset email.');
+            }
+          },
+        },
+      ],
+      'plain-text',
+      email
+    );
+  };
+
   return (
     <>
       <Stack.Screen options={{ headerShown: false }} />
@@ -49,6 +77,7 @@ export default function LoginScreen() {
           placeholder="Email"
           autoCapitalize="none"
           keyboardType="email-address"
+          returnKeyType="next"
           value={email}
           onChangeText={setEmail}
         />
@@ -56,15 +85,21 @@ export default function LoginScreen() {
           style={styles.input}
           placeholder="Password"
           secureTextEntry
+          returnKeyType="done"
           value={password}
           onChangeText={setPassword}
+          onSubmitEditing={onLogin}
         />
         <TouchableOpacity style={styles.button} onPress={onLogin} disabled={loading}>
           <Text style={styles.buttonText}>{loading ? 'Signing in...' : 'LOGIN'}</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity onPress={() => router.push('/(auth)/signup')} style={{ marginTop: 20 }}>
-          <Text style={{ color: '#4caf50', fontWeight: 'bold' }}>Don't have an account? Sign Up</Text>
+        <TouchableOpacity onPress={onForgotPassword} style={styles.forgotLink}>
+          <Text style={styles.forgotText}>Forgot Password?</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={() => router.push('/(auth)/signup')} style={{ marginTop: 12 }}>
+          <Text style={{ color: '#4caf50', fontWeight: 'bold' }}>{"Don't have an account? Sign Up"}</Text>
         </TouchableOpacity>
       </View>
     </>
@@ -113,5 +148,12 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     fontSize: 16,
   },
+  forgotLink: {
+    marginTop: 14,
+  },
+  forgotText: {
+    color: '#1a237e',
+    fontSize: 14,
+    fontWeight: '500',
+  },
 });
-

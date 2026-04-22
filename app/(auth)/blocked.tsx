@@ -12,7 +12,7 @@ export default function BlockedScreen() {
     if (status === 'ready') {
       router.replace('/(tabs)');
     }
-  }, [status]);
+  }, [status, router]);
 
   async function handleLogout() {
     await signOut();

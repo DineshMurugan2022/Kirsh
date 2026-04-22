@@ -8,6 +8,7 @@ interface ManualInputProps {
   onChangeText: (text: string) => void;
   onSend: () => void;
   disabled: boolean;
+  onClear?: () => void;
 }
 
 export const ManualInput = ({ 
@@ -16,7 +17,8 @@ export const ManualInput = ({
   value, 
   onChangeText, 
   onSend, 
-  disabled 
+  disabled,
+  onClear,
 }: ManualInputProps) => {
   return (
     <View style={styles.container}>
@@ -24,9 +26,17 @@ export const ManualInput = ({
         placeholder={placeholder}
         style={styles.input}
         keyboardType="decimal-pad"
+        returnKeyType="send"
         value={value}
         onChangeText={onChangeText}
+        onSubmitEditing={() => { if (value && !disabled) onSend(); }}
+        blurOnSubmit={false}
       />
+      {!!value && !!onClear && (
+        <TouchableOpacity style={styles.clearBtn} onPress={onClear}>
+          <Text style={styles.clearBtnText}>✕</Text>
+        </TouchableOpacity>
+      )}
       <TouchableOpacity 
         style={[styles.button, (disabled || !value) && styles.disabled]} 
         onPress={onSend}
@@ -61,6 +71,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 15,
     fontSize: 16,
     backgroundColor: '#fafafa',
+  },
+  clearBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#e0e0e0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 6,
+  },
+  clearBtnText: {
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '700',
   },
   button: {
     backgroundColor: '#1a237e',

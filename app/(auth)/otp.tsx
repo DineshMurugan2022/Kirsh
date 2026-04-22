@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Alert, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Alert, Platform, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
 import { firestore, serverTimestamp } from '@/src/firebase/config';
 import { useAuth } from '@/src/auth/AuthProvider';
@@ -89,7 +89,6 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 8,
     borderWidth: 1,
-    boxShadow: '0px 2px 2px rgba(0, 0, 0, 0.2)',
     borderColor: '#ddd',
     paddingHorizontal: 12,
     backgroundColor: '#fff',
@@ -97,6 +96,11 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 18,
     letterSpacing: 4,
+    ...Platform.select({
+      android: { elevation: 2 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.1, shadowRadius: 2 },
+      web: { boxShadow: '0px 2px 2px rgba(0,0,0,0.2)' } as any,
+    }),
   },
   button: {
     marginTop: 8,

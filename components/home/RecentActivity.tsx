@@ -1,4 +1,4 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 import { Card } from 'react-native-paper';
 import { LogEntry } from '@/hooks/use-bluetooth';
 
@@ -48,7 +48,11 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 12,
     backgroundColor: '#fff',
-    boxShadow: '0px 2px 4px rgba(0,0,0,0.05)',
+    ...Platform.select({
+      android: { elevation: 2 },
+      ios: { shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.06, shadowRadius: 2 },
+      web: { boxShadow: '0px 2px 4px rgba(0,0,0,0.05)' } as any,
+    }),
   },
   logItem: {
     flexDirection: 'row',

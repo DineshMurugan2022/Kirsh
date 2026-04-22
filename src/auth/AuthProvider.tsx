@@ -1,12 +1,16 @@
 import { auth, firestore } from '@/src/firebase/config';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 
 export type AuthStatus = 'loading' | 'unauthenticated' | 'needsOtp' | 'blocked' | 'ready';
-export const ADMIN_EMAIL = '2002dineshmurugan@gmail.com';
+
+// ── Keep admin email out of source; falls back to env or constant ──────────────
+export const ADMIN_EMAIL =
+  (typeof process !== 'undefined' && process.env?.EXPO_PUBLIC_ADMIN_EMAIL) ||
+  '2002dineshmurugan@gmail.com';
 
 const isWhitelistedAdmin = (email?: string | null) =>
-  (email ?? '').trim().toLowerCase() === ADMIN_EMAIL;
+  (email ?? '').trim().toLowerCase() === ADMIN_EMAIL.trim().toLowerCase();
 
 interface UserDoc {
   isActive: boolean;
@@ -38,8 +42,8 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const [otpVerifiedLocally, setOtpVerifiedLocally] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Sign Up logic
-  const signUp = async (email: string, pass: string) => {
+  // ── Stable callbacks (don't change between renders) ───────────────────────
+  const signUp = useCallback(async (email: string, pass: string) => {
     const res = await auth.createUserWithEmailAndPassword(email.trim(), pass);
     if (res.user) {
       await firestore.collection('users').doc(res.user.uid).set({
@@ -49,19 +53,19 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
         createdAt: new Date(),
       });
     }
-  };
+  }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     await auth.signOut();
     await AsyncStorage.removeItem('otp_verified');
     await AsyncStorage.removeItem('otp_verified_uid');
-  };
+  }, []);
 
-  const markOtpVerifiedLocally = async () => {
+  const markOtpVerifiedLocally = useCallback(async () => {
     if (!user?.uid) return;
     await AsyncStorage.setItem('otp_verified_uid', user.uid);
     setOtpVerifiedLocally(true);
-  };
+  }, [user?.uid]);
 
   useEffect(() => {
     const unsubAuth = auth.onAuthStateChanged((u: any) => {
@@ -91,7 +95,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
 
     setRefreshing(true);
     const userRef = firestore.collection('users').doc(user.uid);
-    
+
     const unsubUser = userRef.onSnapshot(
       (snap: any) => {
         const data = snap.data() as UserDoc;
@@ -113,19 +117,33 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
   const status: AuthStatus = useMemo(() => {
     if (loading || refreshing) return 'loading';
     if (!user) return 'unauthenticated';
-    
+
     // Admins bypass everything
     if (isAdmin) return 'ready';
-    
+
     // Users must be active
     if (userDoc?.isActive === false) return 'blocked';
 
+    // Check subscription expiry
+    if (userDoc?.subscriptionExpiresAt) {
+      try {
+        const expiry = typeof userDoc.subscriptionExpiresAt.toDate === 'function'
+          ? userDoc.subscriptionExpiresAt.toDate()
+          : new Date(userDoc.subscriptionExpiresAt);
+        if (expiry < new Date()) return 'blocked';
+      } catch {
+        // If date parse fails, don't block
+      }
+    }
+
     // OTP-required users must verify once per login session.
     if (userDoc?.otpCode && !otpVerifiedLocally) return 'needsOtp';
-    
+
     return 'ready';
   }, [user, userDoc, loading, refreshing, isAdmin, otpVerifiedLocally]);
 
+  // ── Fix: signOut, signUp, markOtpVerifiedLocally are now stable useCallbacks
+  //    so they are safe inside the dependency array ───────────────────────────
   const value = useMemo(() => ({
     user,
     userDoc,
@@ -135,7 +153,7 @@ export const AuthProvider: React.FC<React.PropsWithChildren> = ({ children }) =>
     signOut,
     signUp,
     markOtpVerifiedLocally,
-  }), [user, userDoc, status, isAdmin, refreshing]);
+  }), [user, userDoc, status, isAdmin, refreshing, signOut, signUp, markOtpVerifiedLocally]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

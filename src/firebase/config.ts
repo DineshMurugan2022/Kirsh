@@ -8,7 +8,7 @@ let resolveTimestampFromDate: (date: Date) => any;
 
 if (Platform.OS === 'web') {
   const { initializeApp, getApps, getApp } = require('firebase/app');
-  const { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword } = require('firebase/auth');
+  const { getAuth, onAuthStateChanged, signInWithEmailAndPassword, signOut, createUserWithEmailAndPassword, sendPasswordResetEmail } = require('firebase/auth');
   const { getFirestore, collection, doc, onSnapshot, addDoc, updateDoc, setDoc, serverTimestamp, Timestamp } = require('firebase/firestore');
 
   const firebaseConfig = {
@@ -66,6 +66,7 @@ if (Platform.OS === 'web') {
     onAuthStateChanged: (cb: any) => onAuthStateChanged(a, cb),
     signInWithEmailAndPassword: (email: string, pass: string) => signInWithEmailAndPassword(a, email, pass),
     createUserWithEmailAndPassword: (email: string, pass: string) => createUserWithEmailAndPassword(a, email, pass),
+    sendPasswordResetEmail: (email: string) => sendPasswordResetEmail(a, email),
     signOut: () => signOut(a),
     get currentUser() { return a.currentUser; }
   });
