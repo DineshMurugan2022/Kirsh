@@ -11,6 +11,8 @@ const OASYS_EOL = '\r\n';
 const OASYS_HEARTBEAT_MS = 1200;
 const OASYS_SEND_BURST_COUNT = 3;
 const OASYS_SEND_BURST_GAP_MS = 170;
+const SR_PREFIX_BURST_COUNT = 2;
+const SR_PREFIX_BURST_GAP_MS = 120;
 
 export interface LogEntry {
   id: number;
@@ -50,11 +52,19 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
   const sendLockRef = useRef(false);
   // Store the device ref so sendWeight always has access to the current device
   const deviceRef = useRef<any>(null);
+  // Keep protocol in a ref so connection/send always reads latest value (no stale closures)
+  const weightProtocolRef = useRef<WeightProtocol>(weightProtocol);
 
   const eol = lineEnding === 'crlf' ? '\r\n' : '\n';
   const formatOasysScaleFrame = useCallback((weight: number, delimiter = OASYS_EOL) => {
     const padded = weight.toFixed(3).padStart(8, ' ');
     return `ST,GS,${padded}kg${delimiter}`;
+  }, []);
+
+  /** Build the payload for Billing POS (sr_prefix) mode */
+  const formatSrPrefixFrame = useCallback((weight: number, delimiter = '\r\n') => {
+    const formatted = weight.toFixed(2);
+    return `SR${formatted}${delimiter}`;
   }, []);
 
   const inferWeightProtocol = useCallback((targetDevice: any): WeightProtocol => {
@@ -77,6 +87,11 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
   useEffect(() => {
     deviceRef.current = device;
   }, [device]);
+
+  // Keep protocolRef in sync
+  useEffect(() => {
+    weightProtocolRef.current = weightProtocol;
+  }, [weightProtocol]);
 
   useEffect(() => {
     connectionStatusRef.current = connectionStatus;
@@ -148,20 +163,22 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
   const initiateHandshake = useCallback(async (connectedDevice: any, protocol: WeightProtocol = weightProtocol) => {
     if (!connectedDevice) return;
 
-    console.log(`[Handshake] Starting POS handshake for ${connectedDevice.address}...`);
+    console.log(`[Handshake] Starting POS handshake for ${connectedDevice.address} (protocol=${protocol})...`);
     let pulseCount = 0;
     const maxPulses = 2;
+    // For OASYS: send a zero-weight scale frame
+    // For Billing POS (sr_prefix): send a simple SR0.00 init frame
     const signals =
       protocol === 'oasys_scale'
         ? [formatOasysScaleFrame(0)]
-        : [`EWS${eol}`, `READY${eol}`];
+        : [formatSrPrefixFrame(0)];
 
     const sendPulse = async () => {
       if (pulseCount >= maxPulses) {
         console.log('[Handshake] Handshake finished.');
         heartbeatFailCountRef.current = 0;
         setIsHeartbeatActive(true);
-        addLog('System', 'EWS Active', 'sent', 'System');
+        addLog('System', 'POS Link Active', 'sent', 'System');
         return;
       }
 
@@ -170,18 +187,18 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
           await RNBluetoothClassic.writeToDevice(connectedDevice.address, signal, 'ascii');
           lastWriteAtRef.current = Date.now();
           console.log(`[Handshake] Sent pulse ${pulseCount + 1}: ${JSON.stringify(signal)}`);
-          await new Promise(resolve => setTimeout(resolve, 180));
+          await new Promise(resolve => setTimeout(resolve, 200));
         }
         pulseCount++;
-        setTimeout(sendPulse, 900);
+        setTimeout(sendPulse, 1000);
       } catch (err) {
         console.error('[Handshake] Pulse failed:', err);
         setIsHeartbeatActive(false);
       }
     };
 
-    setTimeout(sendPulse, 350);
-  }, [addLog, eol, formatOasysScaleFrame, weightProtocol]);
+    setTimeout(sendPulse, 500);
+  }, [addLog, formatOasysScaleFrame, formatSrPrefixFrame, weightProtocol]);
 
   const isSocketOpen = useCallback(async (address?: string | null) => {
     if (!address) return false;
@@ -279,7 +296,7 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
             timeoutId = setTimeout(() => {
               void RNBluetoothClassic.cancelAccept().catch(() => false);
               reject(new Error('Timed out waiting for POS. Open Bluetooth connect on POS and retry.'));
-            }, 20000);
+            }, 30000);
           });
 
           const accepted = await Promise.race([
@@ -424,11 +441,15 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
     if (!socketOpen) return false;
 
     try {
-      const probes = protocol === 'oasys_scale' ? [] : ['EWS\n'];
+      // Send a protocol-appropriate probe to verify the socket is truly writable
+      const probes: string[] =
+        protocol === 'oasys_scale'
+          ? [formatOasysScaleFrame(0)]
+          : [formatSrPrefixFrame(0)];
 
       for (const probe of probes) {
         await writeToConnectedDevice(connectedDevice, probe);
-        await new Promise((resolve) => setTimeout(resolve, 120));
+        await new Promise((resolve) => setTimeout(resolve, 150));
         const stillOpen = await isSocketOpen(address);
         if (!stillOpen) return false;
       }
@@ -438,7 +459,7 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
       console.log('Connection probe failed:', err);
       return false;
     }
-  }, [isSocketOpen, isSocketOpenWithRetry, weightProtocol, writeToConnectedDevice]);
+  }, [formatOasysScaleFrame, formatSrPrefixFrame, isSocketOpen, isSocketOpenWithRetry, weightProtocol, writeToConnectedDevice]);
 
   const requestBluetoothPermissions = useCallback(async (needsScan: boolean) => {
     if (Platform.OS !== 'android') return true;
@@ -590,11 +611,17 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
     setIsScanning(true);
     try {
       const selectedProtocol = applyDeviceDefaults(selectedDevice);
-      const selectedDelimiter = selectedProtocol === 'oasys_scale' ? OASYS_EOL : eol;
-      const selectedConnectionMode: 'client' | 'server' = connectionMode;
+      // Use the resolved protocol directly — NOT the stale state values
+      const selectedDelimiter = selectedProtocol === 'oasys_scale' ? OASYS_EOL : '\r\n';
+      // Determine connection order from the resolved protocol (avoids stale state read)
+      const selectedConnectionMode: 'client' | 'server' =
+        selectedProtocol === 'oasys_scale' ? 'client' : connectionMode;
+
       await RNBluetoothClassic.cancelDiscovery().catch(() => false);
       await ensurePaired(selectedDevice);
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Give POS machines enough time after pairing to stabilize
+      await new Promise(resolve => setTimeout(resolve, 2000));
+
       let connectedDeviceObj: any = null;
       const errors: any[] = [];
       const connectionOrder: Array<'server' | 'client'> =
@@ -616,6 +643,8 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
 
       if (connectedDeviceObj) {
         const resolvedProtocol = applyDeviceDefaults(connectedDeviceObj);
+        // Small stabilization delay before verify probe
+        await new Promise(resolve => setTimeout(resolve, 500));
         const verified = await verifyConnectedDevice(connectedDeviceObj, resolvedProtocol);
         if (!verified) {
           throw new Error('Connected socket is unstable. Please reconnect from POS and try again.');
@@ -694,6 +723,8 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setIsSending(true);
     try {
+      // Read protocol from ref to avoid stale closure
+      const currentProtocol = weightProtocolRef.current;
       let payload = '';
       let logWeight = normalizedWeight;
       let logMode: 'oasys_scale' | 'selling' | 'remaining' = weightMode;
@@ -701,7 +732,7 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
       let sendGapMs = 0;
       let label = `${parsedWeight} kg`;
 
-      if (weightProtocol === 'oasys_scale') {
+      if (currentProtocol === 'oasys_scale') {
         const frame = formatOasysScaleFrame(parsedWeight);
         setLastScaleFrame(frame);
         payload = frame;
@@ -711,11 +742,13 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
         sendCount = OASYS_SEND_BURST_COUNT;
         sendGapMs = OASYS_SEND_BURST_GAP_MS;
       } else {
-        const formatted = parsedWeight.toFixed(2);
-        payload = `${formatted}\r\n`;
-        logWeight = formatted;
+        // Billing POS (sr_prefix): send SR-prefixed weight
+        payload = formatSrPrefixFrame(parsedWeight);
+        logWeight = parsedWeight.toFixed(2);
         logMode = weightMode;
-        label = `${formatted} kg`;
+        label = `${logWeight} kg`;
+        sendCount = SR_PREFIX_BURST_COUNT;
+        sendGapMs = SR_PREFIX_BURST_GAP_MS;
       }
 
       // Retry the socket check because Android Bluetooth can briefly report false negatives.
@@ -731,7 +764,7 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
       await writePayloadBurst(currentDevice, payload, sendCount, sendGapMs);
       heartbeatFailCountRef.current = 0;
       addLog(
-        logMode === 'oasys_scale' ? 'Scale' : (weightMode === 'selling' ? 'Selling' : 'Remaining'),
+        currentProtocol === 'oasys_scale' ? 'Scale' : 'POS',
         logWeight,
         'sent',
         logMode
@@ -744,7 +777,7 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
           mode: weightMode,
           timestamp: serverTimestamp(),
           status: 'sent',
-          protocol: weightProtocol
+          protocol: currentProtocol
         }).catch((fErr: any) => {
           console.error('Firestore log failed:', fErr);
         });
@@ -770,25 +803,27 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
     }
   };
 
-  // Heartbeat
+  // Heartbeat — keeps the Bluetooth socket alive by periodically writing
   useEffect(() => {
     let interval: any;
     if (connectionStatus === 'connected' && isHeartbeatActive && device) {
+      const isOasys = weightProtocol === 'oasys_scale';
+      const heartbeatInterval = isOasys ? OASYS_HEARTBEAT_MS : 5000;
+
       interval = setInterval(async () => {
         try {
-          if (sendLockRef.current) {
-            return;
-          }
+          if (sendLockRef.current) return;
 
-          if (weightProtocol === 'oasys_scale') {
-            if (Date.now() - lastWriteAtRef.current < OASYS_HEARTBEAT_MS - 100) return;
+          const elapsed = Date.now() - lastWriteAtRef.current;
+
+          if (isOasys) {
+            if (elapsed < OASYS_HEARTBEAT_MS - 100) return;
             await writeToConnectedDevice(device, lastScaleFrame || formatOasysScaleFrame(0));
-            heartbeatFailCountRef.current = 0;
-            return;
+          } else {
+            // Billing POS: send SR-prefixed zero-weight keepalive less frequently
+            if (elapsed < 4500) return;
+            await writeToConnectedDevice(device, formatSrPrefixFrame(0));
           }
-
-          if (Date.now() - lastWriteAtRef.current < 4000) return;
-          await writeToConnectedDevice(device, `EWS${eol}`);
           heartbeatFailCountRef.current = 0;
         } catch {
           heartbeatFailCountRef.current += 1;
@@ -798,10 +833,10 @@ export function useBluetoothManager(lang: 'en' | 'ta') {
             setIsHeartbeatActive(false);
           }
         }
-      }, weightProtocol === 'oasys_scale' ? OASYS_HEARTBEAT_MS : 3000);
+      }, heartbeatInterval);
     }
     return () => clearInterval(interval);
-  }, [connectionStatus, device, eol, formatOasysScaleFrame, isHeartbeatActive, lastScaleFrame, weightProtocol, writeToConnectedDevice]);
+  }, [connectionStatus, device, formatOasysScaleFrame, formatSrPrefixFrame, isHeartbeatActive, lastScaleFrame, weightProtocol, writeToConnectedDevice]);
 
   useEffect(() => {
     return () => {

@@ -47,10 +47,10 @@ if (fs.existsSync(connectorPath)) {
     let content = fs.readFileSync(connectorPath, 'utf8');
 
     // Add stabilization delay before the first connect if not present
-    if (!content.includes("Thread.sleep(200)")) {
+    if (!content.includes("Thread.sleep(300)")) {
         content = content.replace(
             "mSocket.connect();",
-            "try { Thread.sleep(200); } catch (Exception e) {} \n        mSocket.connect();"
+            "try { Thread.sleep(300); } catch (Exception e) {} \n        mSocket.connect();"
         );
     }
 
@@ -59,17 +59,17 @@ if (fs.existsSync(connectorPath)) {
     const newConnectMethod = `protected BluetoothSocket connect(Properties properties) throws IOException {
         // Step 1: Attempt standard connection (UUID-based)
         try {
-            try { Thread.sleep(500); } catch (Exception e) {}
+            try { Thread.sleep(800); } catch (Exception e) {}
             mSocket.connect();
             return mSocket;
         } catch (IOException e) {
-            // Step 2: Aggressive Fallback - Try multiple RFCOMM channels (1-5) via reflection.
+            // Step 2: Aggressive Fallback - Try multiple RFCOMM channels via reflection.
             // This is often required for older/specialized SPP devices like POS machines.
-            int[] channels = { 1, 2, 3, 4, 5 };
+            int[] channels = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
             for (int channel : channels) {
                 try {
                     if (mSocket != null) { try { mSocket.close(); } catch (Exception ignored) {} }
-                    try { Thread.sleep(300); } catch (Exception ignored) {}
+                    try { Thread.sleep(500); } catch (Exception ignored) {}
                     
                     if (mSecure) {
                         mSocket = (BluetoothSocket) device.getClass().getMethod("createRfcommSocket", 
